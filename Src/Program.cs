@@ -1,20 +1,17 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
+using System.Diagnostics;
 using System.Net;
-using System.Text;
 using System.Threading.Tasks;
 using Microsoft.Win32;
 using Spectre.Console;
 
-namespace Nihon
-{
-    public class Program
-    {
-        static WebClient Http = new WebClient { Proxy = null };
+namespace Nihon;
 
-        static string Watermark = @"
+public class Program
+{
+    static WebClient Http = new WebClient { Proxy = null };
+
+    static string Watermark = @"
   
   ███╗░░██╗██╗██╗░░██╗░█████╗░███╗░░██╗
   ████╗░██║██║██║░░██║██╔══██╗████╗░██║
@@ -24,76 +21,96 @@ namespace Nihon
   ╚═╝░░╚══╝╚═╝╚═╝░░╚═╝░╚════╝░╚═╝░░╚══╝
         ";
 
-        /*
-         * Add Segoe Fluent Icons Font Check/Install
-         * Add Redist Check/Install (x86/x64)
-        */
+    /*
+     * Add Segoe Fluent Icons Font Check/Install
+    */
 
-        static async Task Main(string[] Parameters)
-        {
-            Console.Title = "Nihon Installer";
-            Console.SetWindowSize(80, 20);
+    static async Task Main()
+    {
+        Console.Title = "Nihon Installer";
+        Console.SetWindowSize(80, 20);
 
-            AnsiConsole.Write(new Markup($"[red]{Watermark}[/]"));
+        AnsiConsole.Write(new Markup($"[red]{Watermark}[/]"));
 
-            string Architecture = AnsiConsole.Prompt(new SelectionPrompt<string>()
-                .Title("\n  Select [underline blue]Windows[/] Architecture")
-                .HighlightStyle(new Style(Color.Red))
-                .AddChoices(new[] { "x86", "x64" }));
+        string Architecture = AnsiConsole.Prompt(new SelectionPrompt<string>()
+            .Title("\n  Select [underline blue]Windows[/] Architecture")
+            .HighlightStyle(new Style(Color.Red))
+            .AddChoices(new[] { "x86", "x64" }));
 
-            AnsiConsole.Clear();
+        AnsiConsole.Clear();
 
-            AnsiConsole.Write(new Markup($"[red]{Watermark}[/]"));
+        AnsiConsole.Write(new Markup($"[red]{Watermark}[/]"));
 
-            string WebViewKey = Architecture == "x86" ?
-                "SOFTWARE\\Microsoft\\EdgeUpdate\\Clients\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
-                : "SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\Clients\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}";
+        string WebViewKey = Architecture == "x86" ?
+            "SOFTWARE\\Microsoft\\EdgeUpdate\\Clients\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+            : "SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\Clients\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}";
 
-            using (RegistryKey RegKey = Registry.LocalMachine.OpenSubKey(WebViewKey))
-                if (RegKey == null)
-                    await AnsiConsole.Progress()
-                        .StartAsync(async Ctx =>
+        using (RegistryKey RegKey = Registry.LocalMachine.OpenSubKey(WebViewKey))
+            if (RegKey == null) await AnsiConsole.Progress()
+                    .StartAsync(async Ctx =>
+                    {
+                        ProgressTask WebViewInstall = Ctx.AddTask("WebView Install", new ProgressTaskSettings { MaxValue = 100 });
+
+                        Http.DownloadProgressChanged += (s, e) =>
                         {
-                            ProgressTask WebViewInstall = Ctx.AddTask("WebView Install", new ProgressTaskSettings { MaxValue = 100 });
+                            while (Ctx.IsFinished != true)
+                                WebViewInstall.Increment(e.ProgressPercentage);
+                        };
 
-                            /* Check Architecture And Download WebView Based On That Here. */
-                            await Http.DownloadFileTaskAsync(
-                                "https://go.microsoft.com/fwlink/p/?LinkId=2124703",
-                                "MicrosoftEdgeWebview2Setup.exe");
-
-                            Http.DownloadProgressChanged += (s, e) =>
+                        Http.DownloadFileCompleted += (s, e) =>
+                        {
+                            new Process
                             {
-                                while (Ctx.IsFinished != true)
-                                    WebViewInstall.Increment(e.ProgressPercentage);
-                            };
-                        });
+                                StartInfo = new ProcessStartInfo
+                                {
+                                    FileName = "WebView2RuntimeSetup.exe",
+                                    Arguments = "/silent /install",
+                                    CreateNoWindow = true
+                                }
+                            }.Start();
+                        };
 
-            Http.Dispose();
-            AnsiConsole.Clear();
+                        if (Architecture == "x86") await Http.DownloadFileTaskAsync("https://go.microsoft.com/fwlink/?linkid=2099617", "WebView2RuntimeSetup.exe");
+                        else await Http.DownloadFileTaskAsync("https://go.microsoft.com/fwlink/?linkid=2124701", "WebView2RuntimeSetup.exe");
+                    });
 
-            AnsiConsole.Write(new Markup($"[red]{Watermark}[/]"));
-            AnsiConsole.Write(new Markup("[springgreen3_1]Done[/]... Exiting In 3 Seconds."));
+        using (RegistryKey RegKey = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\DevDiv\VC\Servicing\14.0\RuntimeMinimum", false))
+            if (RegKey == null) await AnsiConsole.Progress()
+                    .StartAsync(async Ctx =>
+                    {
+                        ProgressTask RedistInstall = Ctx.AddTask("Redist Install", new ProgressTaskSettings { MaxValue = 100 });
 
-            await Task.Delay(3000);
+                        Http.DownloadProgressChanged += (s, e) =>
+                        {
+                            while (Ctx.IsFinished != true)
+                                RedistInstall.Increment(e.ProgressPercentage);
+                        };
 
-            Environment.Exit(0);
-        }
+                        Http.DownloadFileCompleted += (s, e) =>
+                        {
+                            new Process
+                            {
+                                StartInfo = new ProcessStartInfo
+                                {
+                                    FileName = "RedistSetup.exe",
+                                    Arguments = "/silent /install",
+                                    CreateNoWindow = true
+                                }
+                            }.Start();
+                        };
 
-        /* Do Like WebView Check. */
-        static bool IsRedist(string Arch)
-        {
-            string KeyName = $"SOFTWARE\\Microsoft\\VisualStudio\\SxS\\VC7";
-            RegistryKey RegistryKey = Registry.LocalMachine.OpenSubKey(KeyName);
-            if (RegistryKey == null)
-                return false;
+                        if (Architecture == "x86") await Http.DownloadFileTaskAsync("https://aka.ms/vs/17/release/vc_redist.x86.exe", "RedistSetup.exe");
+                        else await Http.DownloadFileTaskAsync("https://aka.ms/vs/17/release/vc_redist.x64.exe", "RedistSetup.exe");
+                    });
 
-            string ValueName = $"14.0_{Arch}_RuntimeMinimum_{Arch}";
-            string RegistryValue = RegistryKey.GetValue(ValueName) as string;
-            if (string.IsNullOrEmpty(RegistryValue))
-                return false;
+        Http.Dispose();
+        AnsiConsole.Clear();
 
-            string RedistFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), $"msvcr120.dll_{Arch}");
-            return Directory.Exists(RedistFolder);
-        }
+        AnsiConsole.Write(new Markup($"[red]{Watermark}[/]"));
+        AnsiConsole.Write(new Markup("[springgreen3_1]Done[/]... Exiting In 3 Seconds."));
+
+        await Task.Delay(3000);
+
+        Environment.Exit(0);
     }
 }
